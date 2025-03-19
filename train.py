@@ -3,7 +3,7 @@ import chess
 import numpy as np
 from tqdm import tqdm
 from model import ChessNet, encode_board
-from mcts import MCTS
+from mcts import MCTS, move_to_index
 import random
 from torch.utils.data import Dataset, DataLoader
 
