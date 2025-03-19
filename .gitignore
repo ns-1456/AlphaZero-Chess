@@ -33,9 +33,10 @@ ENV/
 
 # Project specific
 model.pth
+model_checkpoint_*.pt
 *.log
 .DS_Store
 
 # Jupyter
 .ipynb_checkpoints
-*.ipynb_checkpoints/ 
+*.ipynb_checkpoints/
