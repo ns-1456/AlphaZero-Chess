@@ -160,6 +160,17 @@ def move_to_index(move):
     # If we get here, something went wrong
     return 0
 
+# Function for multiprocessing - must be at module level to be picklable
+def run_game(args):
+    model_state, num_simulations, device_str, game_id = args
+    
+    # Create a new model and load state dict
+    device = torch.device(device_str)
+    game_model = ChessNet().to(device)
+    game_model.load_state_dict(model_state)
+    
+    return self_play_game(game_model, num_simulations, device_str, game_id)
+
 # ====== MCTS CODE ======
 class Node:
     def __init__(self, prior=0.0):
@@ -361,6 +372,42 @@ def self_play_game(model, num_simulations, device_str, game_id):
     print(f"Game {game_id+1} completed with {len(states)} positions")
     return states, policies, values
 
+def parallel_self_play(model, num_games, num_simulations, device_str):
+    """Generate self-play games in parallel"""
+    start_time = time.time()
+    print(f"Starting {num_games} parallel self-play games...")
+    
+    # Determine number of processes
+    num_workers = min(multiprocessing.cpu_count(), num_games)
+    print(f"Using {num_workers} workers")
+    
+    # Make model's state dict serializable for multiprocessing
+    model_state = model.state_dict()
+    
+    # Prepare arguments for each game
+    args = [(model_state, num_simulations, device_str, i) for i in range(num_games)]
+    
+    # Run games in parallel
+    game_results = []
+    
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        game_results = list(executor.map(run_game, args))
+    
+    # Combine results
+    all_states = []
+    all_policies = []
+    all_values = []
+    
+    for states, policies, values in game_results:
+        all_states.extend(states)
+        all_policies.extend(policies)
+        all_values.extend(values)
+    
+    elapsed = time.time() - start_time
+    print(f"Self-play completed in {elapsed:.1f} seconds. Collected {len(all_states)} positions.")
+    
+    return all_states, all_policies, all_values
+
 def train_epoch(model, optimizer, dataloader, device):
     """Train model for one epoch."""
     model.train()
@@ -393,53 +440,6 @@ def train_epoch(model, optimizer, dataloader, device):
         num_batches += 1
     
     return total_loss / num_batches, policy_loss_total / num_batches, value_loss_total / num_batches
-
-def parallel_self_play(model, num_games, num_simulations, device_str):
-    """Generate self-play games in parallel"""
-    start_time = time.time()
-    print(f"Starting {num_games} parallel self-play games...")
-    
-    # Determine number of processes
-    num_workers = min(multiprocessing.cpu_count(), num_games)
-    print(f"Using {num_workers} workers")
-    
-    # Make model's state dict serializable for multiprocessing
-    model_state = model.state_dict()
-    
-    # Prepare arguments for each game
-    args = [(model_state, num_simulations, device_str, i) for i in range(num_games)]
-    
-    # Run games in parallel
-    game_results = []
-    
-    # Modified function for multiprocessing
-    def run_game(args):
-        model_state, num_simulations, device_str, game_id = args
-        
-        # Create a new model and load state dict
-        device = torch.device(device_str)
-        game_model = ChessNet().to(device)
-        game_model.load_state_dict(model_state)
-        
-        return self_play_game(game_model, num_simulations, device_str, game_id)
-    
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        game_results = list(executor.map(run_game, args))
-    
-    # Combine results
-    all_states = []
-    all_policies = []
-    all_values = []
-    
-    for states, policies, values in game_results:
-        all_states.extend(states)
-        all_policies.extend(policies)
-        all_values.extend(values)
-    
-    elapsed = time.time() - start_time
-    print(f"Self-play completed in {elapsed:.1f} seconds. Collected {len(all_states)} positions.")
-    
-    return all_states, all_policies, all_values
 
 def train_model(num_iterations=2, games_per_iteration=5, num_epochs=3, batch_size=64, num_simulations=100):
     """Main training loop with parallel self-play."""
