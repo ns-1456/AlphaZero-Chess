@@ -17,21 +17,24 @@ class MCTS:
         self.model = model
         self.move_encoder = move_encoder
         self.num_simulations = num_simulations
+        self.device = next(model.parameters()).device
         
-    def search(self, board, temperature=0.0):
+    def search(self, board, board_tensor):
         """Search for the best move from current position.
         
         Args:
             board: chess.Board object
-            temperature: Temperature for move selection
-                        0.0 = select best move
-                        1.0 = sample proportionally to visit counts
+            board_tensor: Preprocessed board tensor
                         
         Returns:
             Node: Root node of the search tree
         """
         # Create root node
         root = Node(board.copy())
+        
+        # If game is over or no legal moves, return root
+        if board.is_game_over() or not list(board.legal_moves):
+            return root
         
         # Run simulations
         for _ in range(self.num_simulations):
@@ -41,6 +44,8 @@ class MCTS:
             # Selection: traverse tree until we find an unexpanded node
             while node.is_expanded and not node.board.is_game_over():
                 child, move = node.select_child()
+                if child is None or move is None:  # No legal moves
+                    break
                 scratch_board.push(move)
                 node = child
                 
@@ -69,18 +74,31 @@ class MCTS:
     
     def _prepare_state(self, board):
         """Convert board to neural network input format."""
-        # Get legal moves for policy target
-        legal_moves = list(board.legal_moves)
+        # Create board tensor
+        state = torch.zeros((12, 8, 8), dtype=torch.float32, device=self.device)
         
-        # Create policy target tensor
-        policy_target = self.move_encoder.encode_moves(legal_moves, board)
+        # Piece placement planes (12 planes: 6 white pieces + 6 black pieces)
+        piece_idx = {
+            'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5,  # White pieces
+            'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11  # Black pieces
+        }
         
+        for square in chess.SQUARES:
+            piece = board.piece_at(square)
+            if piece is not None:
+                rank, file = chess.square_rank(square), chess.square_file(square)
+                piece_plane = piece_idx[piece.symbol()]
+                state[piece_plane, rank, file] = 1.0
+                
         # Add batch dimension
-        return policy_target.unsqueeze(0)
+        return state.unsqueeze(0)
     
     def _get_game_result(self, board):
         """Get game result from terminal position."""
-        if board.is_checkmate():
-            # Return -1 if side to move is checkmated
-            return -1.0 if board.turn else 1.0
-        return 0.0  # Draw 
+        outcome = board.outcome()
+        if outcome is None:
+            return 0.0
+        elif outcome.winner is None:
+            return 0.0
+        else:
+            return 1.0 if outcome.winner else -1.0 

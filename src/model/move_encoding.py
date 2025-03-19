@@ -5,7 +5,14 @@ import numpy as np
 class MoveEncoder:
     """Handles conversion between chess moves and neural network policy outputs."""
     
-    def __init__(self):
+    def __init__(self, device=None):
+        """Initialize move encoder.
+        
+        Args:
+            device: torch.device to use for tensors
+        """
+        self.device = device if device is not None else torch.device('cpu')
+        
         # Define move directions
         self.KNIGHT_MOVES = [
             (-2, -1), (-2, 1), (-1, -2), (-1, 2),
@@ -28,6 +35,10 @@ class MoveEncoder:
         # Promotion pieces (excluding queen, which is handled in queen-like moves)
         self.promotion_pieces = [chess.KNIGHT, chess.BISHOP, chess.ROOK]
     
+    def set_device(self, device):
+        """Set the device for tensor operations."""
+        self.device = device
+    
     def square_to_coordinates(self, square):
         """Convert a chess.Square to (row, col) coordinates."""
         return (square // 8, square % 8)
@@ -38,18 +49,19 @@ class MoveEncoder:
             return row * 8 + col
         return None
     
-    def move_to_policy_index(self, move, board):
-        """Convert a chess move to policy indices (square_index, move_type_index).
+    def move_to_policy_index(self, move, board=None):
+        """Convert a chess move to policy index.
         
         Args:
             move: chess.Move object
-            board: chess.Board object for context
+            board: chess.Board object (optional)
         
         Returns:
-            tuple: (square_index, move_type_index) where:
-                  square_index is the starting square (0-63)
-                  move_type_index is the type of move (0-72)
+            int: Policy index (0-1967)
         """
+        if move is None:
+            raise ValueError("Move cannot be None")
+            
         from_square = move.from_square
         to_square = move.to_square
         
@@ -62,49 +74,52 @@ class MoveEncoder:
         
         # Check if it's a knight move
         if (row_diff, col_diff) in self.KNIGHT_MOVES:
-            move_index = self.move_index['knight'][self.KNIGHT_MOVES.index((row_diff, col_diff))]
-            return (from_square, move_index)
-        
-        # Check if it's a queen-like move
-        if max(abs(row_diff), abs(col_diff)) > 0:
-            # Normalize direction
-            if row_diff != 0:
-                row_diff //= abs(row_diff)
-            if col_diff != 0:
-                col_diff //= abs(col_diff)
-            
-            if (row_diff, col_diff) in self.QUEEN_MOVES:
-                move_index = self.move_index['queen'][self.QUEEN_MOVES.index((row_diff, col_diff))]
-                return (from_square, move_index)
+            move_type_idx = self.move_index['knight'][self.KNIGHT_MOVES.index((row_diff, col_diff))]
+            return from_square * 73 + move_type_idx
         
         # Check for underpromotions (not to queen)
         if move.promotion and move.promotion != chess.QUEEN:
             try:
                 promo_idx = self.promotion_pieces.index(move.promotion)
-                return (from_square, self.move_index['underpromotion'][promo_idx])
+                move_type_idx = self.move_index['underpromotion'][promo_idx]
+                return from_square * 73 + move_type_idx
             except ValueError:
-                pass
+                raise ValueError(f"Invalid promotion piece: {move.promotion}")
+        
+        # Handle queen-like moves
+        if max(abs(row_diff), abs(col_diff)) > 0:
+            # Normalize direction
+            if row_diff != 0:
+                row_diff = row_diff // abs(row_diff)
+            if col_diff != 0:
+                col_diff = col_diff // abs(col_diff)
+            
+            if (row_diff, col_diff) in self.QUEEN_MOVES:
+                move_type_idx = self.move_index['queen'][self.QUEEN_MOVES.index((row_diff, col_diff))]
+                return from_square * 73 + move_type_idx
         
         # If we get here, something went wrong
         raise ValueError(f"Could not encode move {move}")
     
-    def policy_index_to_moves(self, square_index, move_type_index, board):
-        """Convert policy indices to possible chess moves.
+    def policy_index_to_moves(self, policy_idx, board):
+        """Convert policy index to possible chess moves.
         
         Args:
-            square_index: Starting square (0-63)
-            move_type_index: Type of move (0-72)
+            policy_idx: Policy index (0-1967)
             board: chess.Board object for context
         
         Returns:
             list: Possible chess.Move objects
         """
-        from_row, from_col = self.square_to_coordinates(square_index)
+        square_idx = policy_idx // 73
+        move_type_idx = policy_idx % 73
+        
+        from_row, from_col = self.square_to_coordinates(square_idx)
         possible_moves = []
         
         # Handle queen-like moves
-        if move_type_index < 8:
-            direction = self.QUEEN_MOVES[move_type_index]
+        if move_type_idx < 8:
+            direction = self.QUEEN_MOVES[move_type_idx]
             curr_row, curr_col = from_row, from_col
             
             # Keep going in the direction until we hit a piece or the board edge
@@ -117,14 +132,14 @@ class MoveEncoder:
                     break
                     
                 # Create move and check if it's legal
-                move = chess.Move(square_index, to_square)
+                move = chess.Move(square_idx, to_square)
                 if move in board.legal_moves:
                     possible_moves.append(move)
                     
                     # Check for possible queen promotion
-                    if board.piece_at(square_index) and board.piece_at(square_index).piece_type == chess.PAWN:
+                    if board.piece_at(square_idx) and board.piece_at(square_idx).piece_type == chess.PAWN:
                         if (board.turn and curr_row == 7) or (not board.turn and curr_row == 0):
-                            move = chess.Move(square_index, to_square, promotion=chess.QUEEN)
+                            move = chess.Move(square_idx, to_square, promotion=chess.QUEEN)
                             if move in board.legal_moves:
                                 possible_moves.append(move)
                 
@@ -133,21 +148,21 @@ class MoveEncoder:
                     break
         
         # Handle knight moves
-        elif move_type_index < 16:
-            knight_idx = move_type_index - 8
+        elif move_type_idx < 16:
+            knight_idx = move_type_idx - 8
             direction = self.KNIGHT_MOVES[knight_idx]
             to_row = from_row + direction[0]
             to_col = from_col + direction[1]
             to_square = self.coordinates_to_square(to_row, to_col)
             
             if to_square is not None:
-                move = chess.Move(square_index, to_square)
+                move = chess.Move(square_idx, to_square)
                 if move in board.legal_moves:
                     possible_moves.append(move)
         
         # Handle underpromotions
         else:
-            promo_idx = move_type_index - 16
+            promo_idx = move_type_idx - 16
             if promo_idx < len(self.promotion_pieces):
                 piece = self.promotion_pieces[promo_idx]
                 
@@ -159,7 +174,7 @@ class MoveEncoder:
                     to_square = self.coordinates_to_square(to_row, to_col)
                     
                     if to_square is not None and ((board.turn and to_row == 7) or (not board.turn and to_row == 0)):
-                        move = chess.Move(square_index, to_square, promotion=piece)
+                        move = chess.Move(square_idx, to_square, promotion=piece)
                         if move in board.legal_moves:
                             possible_moves.append(move)
         
@@ -173,15 +188,14 @@ class MoveEncoder:
             board: chess.Board object
             
         Returns:
-            torch.Tensor: Policy target of shape (73, 8, 8)
+            torch.Tensor: Policy target of shape (1968,)
         """
-        policy = torch.zeros(73, 8, 8)
+        policy = torch.zeros(1968, dtype=torch.float32, device=self.device)
         
         for move in legal_moves:
             try:
-                square_idx, move_type_idx = self.move_to_policy_index(move, board)
-                row, col = self.square_to_coordinates(square_idx)
-                policy[move_type_idx, row, col] = 1.0
+                policy_idx = self.move_to_policy_index(move)
+                policy[policy_idx] = 1.0
             except ValueError:
                 continue
                 
@@ -191,7 +205,7 @@ class MoveEncoder:
         """Convert policy network output to a list of moves with probabilities.
         
         Args:
-            policy_output: torch.Tensor of shape (73, 8, 8)
+            policy_output: torch.Tensor of shape (1968,)
             board: chess.Board object
             
         Returns:
@@ -200,20 +214,16 @@ class MoveEncoder:
         moves_with_probs = []
         
         # Convert policy output to probabilities
-        policy_probs = torch.softmax(policy_output.view(-1), dim=0).view(73, 8, 8)
+        policy_probs = torch.softmax(policy_output, dim=0)
         
         # Find all non-zero probabilities
-        for move_type in range(73):
-            for row in range(8):
-                for col in range(8):
-                    prob = policy_probs[move_type, row, col].item()
-                    if prob > 0:
-                        square_idx = self.coordinates_to_square(row, col)
-                        possible_moves = self.policy_index_to_moves(square_idx, move_type, board)
-                        
-                        for move in possible_moves:
-                            if move in board.legal_moves:
-                                moves_with_probs.append((move, prob))
+        for idx in range(1968):
+            prob = policy_probs[idx].item()
+            if prob > 0:
+                possible_moves = self.policy_index_to_moves(idx, board)
+                for move in possible_moves:
+                    if move in board.legal_moves:
+                        moves_with_probs.append((move, prob))
         
         # Sort by probability
         moves_with_probs.sort(key=lambda x: x[1], reverse=True)

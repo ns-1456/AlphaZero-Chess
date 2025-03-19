@@ -34,7 +34,7 @@ class ChessModel(nn.Module):
     """Neural network for chess position evaluation and move prediction.
     
     Architecture:
-    1. Input layer: 73 planes of 8x8 board representation
+    1. Input layer: 12 planes of 8x8 board representation
     2. Initial convolution block
     3. Multiple residual blocks for pattern recognition
     4. Two heads:
@@ -46,16 +46,16 @@ class ChessModel(nn.Module):
         super(ChessModel, self).__init__()
         
         # Input: 8x8x12 (6 piece types x 2 colors)
-        self.conv1 = nn.Conv2d(12, 256, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.conv1 = ConvBlock(12, 256)
+        self.res1 = ResidualBlock(256)
+        self.res2 = ResidualBlock(256)
         
         # Policy head
-        self.policy_conv = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.policy_conv = ConvBlock(256, 256)
         self.policy_fc = nn.Linear(256 * 8 * 8, 1968)  # 1968 possible moves
         
         # Value head
-        self.value_conv = nn.Conv2d(256, 1, kernel_size=1)
+        self.value_conv = ConvBlock(256, 1)
         self.value_fc1 = nn.Linear(8 * 8, 256)
         self.value_fc2 = nn.Linear(256, 1)
 
@@ -64,18 +64,17 @@ class ChessModel(nn.Module):
         x = x.to(next(self.parameters()).device)
         
         # Shared layers
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        x = self.conv1(x)
+        x = self.res1(x)
+        x = self.res2(x)
         
         # Policy head
-        policy = F.relu(self.policy_conv(x))
+        policy = self.policy_conv(x)
         policy = policy.view(-1, 256 * 8 * 8)
         policy = self.policy_fc(policy)
-        policy = F.log_softmax(policy, dim=1)
         
         # Value head
-        value = F.relu(self.value_conv(x))
+        value = self.value_conv(x)
         value = value.view(-1, 8 * 8)
         value = F.relu(self.value_fc1(value))
         value = torch.tanh(self.value_fc2(value))

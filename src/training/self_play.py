@@ -14,28 +14,28 @@ class SelfPlay:
             model: Neural network model
             move_encoder: MoveEncoder instance
             games_to_play: Number of games to generate
-            mcts_sims: Number of MCTS simulations per move
+            mcts_sims: Number of simulations per move
         """
         self.model = model
+        self.device = next(model.parameters()).device
         self.move_encoder = move_encoder
+        self.move_encoder.set_device(self.device)
         self.games_to_play = games_to_play
         self.mcts_sims = mcts_sims
-        self.device = next(model.parameters()).device
         
     def generate_game(self):
         """Play a single game and generate training data.
         
         Returns:
-            list: List of dictionaries containing board_tensor, policy, and turn
+            list: List of dictionaries containing board_tensor, policy, and value
         """
-        env = ChessEnv()
+        env = ChessEnv(device=self.device)
         mcts = MCTS(self.model, self.move_encoder, num_simulations=self.mcts_sims)
         training_data = []
         
         while not env.is_game_over():
-            # Get board tensor and move it to the correct device
+            # Get board tensor (already on correct device)
             board_tensor = env.get_board_tensor()
-            board_tensor = board_tensor.to(self.device)
             
             # Run MCTS
             root = mcts.search(env.board, board_tensor)
@@ -44,10 +44,13 @@ class SelfPlay:
             policy = torch.zeros(1968, device=self.device)
             total_visits = sum(child.visit_count for child in root.children.values())
             
-            for move, child in root.children.items():
-                move_idx = self.move_encoder.move_to_policy_index(move)
-                if move_idx is not None:
-                    policy[move_idx] = child.visit_count / total_visits
+            if total_visits > 0:  # Only update policy if there are visits
+                for move, child in root.children.items():
+                    try:
+                        policy_idx = self.move_encoder.move_to_policy_index(move)
+                        policy[policy_idx] = child.visit_count / total_visits
+                    except ValueError:
+                        continue
             
             # Store position
             training_data.append({
@@ -59,13 +62,20 @@ class SelfPlay:
             # Select and make move
             if len(env.board.move_stack) < 30:  # Temperature = 1
                 probs = torch.tensor([child.visit_count for child in root.children.values()], device=self.device)
-                probs = probs / probs.sum()
-                move_idx = torch.multinomial(probs, 1).item()
-                move = list(root.children.keys())[move_idx]
+                if len(probs) > 0:  # Only sample if there are moves
+                    probs = probs / probs.sum()
+                    move_idx = torch.multinomial(probs, 1).item()
+                    move = list(root.children.keys())[move_idx]
+                    env.make_move(move)
+                else:
+                    break  # No legal moves
             else:  # Temperature = 0
-                move = max(root.children.items(), key=lambda x: x[1].visit_count)[0]
-            
-            env.make_move(move)
+                visits = [(move, child.visit_count) for move, child in root.children.items()]
+                if visits:  # Only select if there are moves
+                    move = max(visits, key=lambda x: x[1])[0]
+                    env.make_move(move)
+                else:
+                    break  # No legal moves
         
         # Add game result to all positions
         outcome = env.board.outcome()
@@ -77,7 +87,7 @@ class SelfPlay:
             result = 1 if outcome.winner else -1
             
         for data in training_data:
-            data['value'] = result if data['turn'] else -result
+            data['value'] = torch.tensor([result if data['turn'] else -result], dtype=torch.float32, device=self.device)
         
         return training_data
     

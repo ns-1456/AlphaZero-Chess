@@ -1,6 +1,7 @@
 import math
 import chess
 import numpy as np
+import torch
 
 class Node:
     """A node in the MCTS search tree."""
@@ -37,7 +38,21 @@ class Node:
         if self.is_expanded:
             return
             
-        for move, prob in policy_probs:
+        # If there are no legal moves, mark as expanded and return
+        legal_moves = list(self.board.legal_moves)
+        if not legal_moves:
+            self.is_expanded = True
+            return
+            
+        # Create children for all legal moves
+        for move in legal_moves:
+            # Find probability for this move
+            prob = 0.0
+            for m, p in policy_probs:
+                if m == move:
+                    prob = p
+                    break
+            
             # Create a new board position
             new_board = self.board.copy()
             new_board.push(move)
@@ -53,7 +68,15 @@ class Node:
         self.is_expanded = True
     
     def select_child(self):
-        """Select the child node with the highest UCB score."""
+        """Select the child node with the highest UCB score.
+        
+        Returns:
+            tuple: (selected child node, move that leads to it)
+            or (None, None) if no legal moves
+        """
+        if not self.children:
+            return None, None
+            
         best_score = float('-inf')
         best_child = None
         best_move = None
@@ -128,7 +151,7 @@ class Node:
                        1.0 = sample proportionally to visit counts
                        
         Returns:
-            Selected chess.Move
+            Selected chess.Move or None if no legal moves
         """
         visits = self.get_visit_counts()
         if not visits:

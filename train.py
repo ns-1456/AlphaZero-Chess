@@ -15,7 +15,7 @@ def train_model(num_games=10, num_epochs=5):
     # Initialize model and move it to device
     model = ChessModel()
     model = model.to(device)
-    move_encoder = MoveEncoder()
+    move_encoder = MoveEncoder(device=device)
     
     print(f"\nGenerating {num_games} self-play games...")
     self_play = SelfPlay(model, move_encoder, games_to_play=num_games)
