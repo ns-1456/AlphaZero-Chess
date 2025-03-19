@@ -42,8 +42,11 @@ class ChessModel(nn.Module):
        - Value head: Evaluates the position
     """
     
-    def __init__(self):
+    def __init__(self, device=None):
         super(ChessModel, self).__init__()
+        
+        # Set device
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Input: 8x8x12 (6 piece types x 2 colors)
         self.conv1 = ConvBlock(12, 256)
@@ -58,10 +61,13 @@ class ChessModel(nn.Module):
         self.value_conv = ConvBlock(256, 1)
         self.value_fc1 = nn.Linear(8 * 8, 256)
         self.value_fc2 = nn.Linear(256, 1)
+        
+        # Move model to device
+        self.to(self.device)
 
     def forward(self, x):
         # Ensure input is on the correct device
-        x = x.to(next(self.parameters()).device)
+        x = x.to(self.device)
         
         # Shared layers
         x = self.conv1(x)
@@ -87,7 +93,7 @@ class ChessModel(nn.Module):
             board_tensor = board_tensor.unsqueeze(0)
         
         # Move input to same device as model
-        board_tensor = board_tensor.to(next(self.parameters()).device)
+        board_tensor = board_tensor.to(self.device)
         
         self.eval()
         with torch.no_grad():

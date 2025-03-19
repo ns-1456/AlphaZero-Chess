@@ -13,8 +13,7 @@ def train_model(num_games=10, num_epochs=5):
     print(f"Using device: {device}")
     
     # Initialize model and move it to device
-    model = ChessModel()
-    model = model.to(device)
+    model = ChessModel(device=device)
     move_encoder = MoveEncoder(device=device)
     
     print(f"\nGenerating {num_games} self-play games...")

@@ -54,8 +54,8 @@ class SelfPlay:
             
             # Store position
             training_data.append({
-                'board_tensor': board_tensor,
-                'policy': policy,
+                'board_tensor': board_tensor.clone(),  # Clone to avoid memory sharing
+                'policy': policy.clone(),  # Clone to avoid memory sharing
                 'turn': env.board.turn
             })
             

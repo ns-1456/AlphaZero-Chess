@@ -43,7 +43,7 @@ class ChessEnv:
                 piece_plane = piece_idx[piece.symbol()]
                 state[piece_plane, rank, file] = 1.0
                 
-        return state
+        return state.clone()  # Clone to avoid memory sharing
     
     def get_valid_moves(self):
         """Get list of valid moves in current position."""
