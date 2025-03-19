@@ -1,115 +1,53 @@
-# AlphaZero-like Chess Implementation
+# AlphaZero-like Chess Model
 
-A Python implementation of a chess AI inspired by DeepMind's AlphaZero. This project uses deep learning and Monte Carlo Tree Search (MCTS) to learn and play chess through self-play.
+A PyTorch implementation of an AlphaZero-like model for playing chess, featuring:
+- Deep neural network with policy and value heads
+- Monte Carlo Tree Search (MCTS)
+- Self-play training pipeline
 
-## Features
-
-- **Neural Network Architecture**
-  - Dual-headed network (policy and value heads)
-  - Convolutional layers for board processing
-  - Policy output for move prediction
-  - Value output for position evaluation
-
-- **Monte Carlo Tree Search**
-  - Efficient tree search implementation
-  - UCB1 exploration formula
-  - Parallel game simulation
-  - Visit count-based move selection
-
-- **Training Pipeline**
-  - Self-play game generation
-  - Experience replay buffer
-  - Policy and value loss optimization
-  - Model checkpointing
-
-- **Web Interface**
-  - Interactive chess board
-  - Play against AI
-  - Move validation
-  - Game state visualization
+## Requirements
+```
+numpy==1.24.3
+torch==2.1.0
+python-chess==1.10.0
+tqdm==4.66.1
+```
 
 ## Project Structure
+- `model.py`: Neural network architecture (ResNet with policy and value heads)
+- `mcts.py`: Monte Carlo Tree Search implementation
+- `train.py`: Training script with self-play and learning pipeline
 
-```
-.
-├── src/
-│   ├── environment/      # Chess game environment
-│   ├── model/           # Neural network architecture
-│   ├── mcts/            # Monte Carlo Tree Search
-│   ├── training/        # Training and self-play
-│   └── web/             # Web interface
-├── notebooks/           # Jupyter notebooks
-├── tests/              # Unit tests
-├── requirements.txt    # Dependencies
-└── README.md          # This file
+## Training on Google Colab
+1. Upload these files to your Google Drive
+2. Create a new Colab notebook
+3. Mount your Google Drive:
+```python
+from google.colab import drive
+drive.mount('/content/drive')
 ```
 
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/ns-1456/AlphaZero-like-Chess.git
-cd AlphaZero-like-Chess
+4. Install dependencies:
+```python
+!pip install -r requirements.txt
 ```
 
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+5. Start training:
+```python
+!python train.py
 ```
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+## Model Architecture
+- Input: 8x8x12 board representation (6 piece types × 2 colors)
+- ResNet backbone with 19 residual blocks
+- Policy head: Predicts move probabilities (1968 possible moves)
+- Value head: Evaluates position (-1 to 1)
 
-## Training
+## Training Process
+1. Self-play games using MCTS and current model
+2. Collection of (state, policy, value) training data
+3. Model training on collected data
+4. Repeat with improved model
 
-You can train the model in two ways:
-
-### Local Training
-```bash
-python train.py
-```
-
-### Google Colab (Recommended)
-1. Open `AlphaZero_Chess.ipynb` in Google Colab
-2. Select GPU runtime
-3. Run all cells
-
-## Playing Against the AI
-
-1. Start the web server:
-```bash
-python run_server.py
-```
-
-2. Open your browser and visit `http://localhost:8080`
-
-## Training Parameters
-
-- Self-play games: 100
-- MCTS simulations per move: 800
-- Training epochs: 10
-- Batch size: 256
-- Temperature:
-  - First 30 moves: τ = 1.0 (exploration)
-  - After 30 moves: τ = 0.0 (exploitation)
-
-## Dependencies
-
-- Python 3.8+
-- PyTorch
-- python-chess
-- Flask
-- tqdm
-
-## License
-
-MIT License
-
-## Acknowledgments
-
-This project is inspired by:
-- [DeepMind's AlphaZero paper](https://arxiv.org/abs/1712.01815)
-- [Leela Chess Zero](https://lczero.org/) 
+## Checkpoints
+Model checkpoints are saved after each iteration in format: `model_checkpoint_N.pt`
