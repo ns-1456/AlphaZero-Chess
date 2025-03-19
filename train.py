@@ -3,7 +3,59 @@ import chess
 import numpy as np
 from tqdm import tqdm
 from model import ChessNet, encode_board
-from mcts import MCTS, move_to_index
+
+# Define move_to_index function here
+def move_to_index(move):
+    """Convert chess move to policy index."""
+    from_square = move.from_square
+    to_square = move.to_square
+    
+    # Calculate direction
+    from_rank = from_square // 8
+    from_file = from_square % 8
+    to_rank = to_square // 8
+    to_file = to_square % 8
+    
+    rank_diff = to_rank - from_rank
+    file_diff = to_file - from_file
+    
+    # Handle knight moves
+    knight_moves = [
+        (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+        (1, -2), (1, 2), (2, -1), (2, 1)
+    ]
+    if (rank_diff, file_diff) in knight_moves:
+        move_type = 8 + knight_moves.index((rank_diff, file_diff))
+        return from_square * 19 + move_type
+    
+    # Handle queen moves (including rook and bishop moves)
+    queen_moves = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1),          (0, 1),
+        (1, -1),  (1, 0),  (1, 1)
+    ]
+    
+    # Normalize direction for queen moves
+    if rank_diff != 0:
+        rank_diff = rank_diff // abs(rank_diff)
+    if file_diff != 0:
+        file_diff = file_diff // abs(file_diff)
+        
+    if (rank_diff, file_diff) in queen_moves:
+        move_type = queen_moves.index((rank_diff, file_diff))
+        return from_square * 19 + move_type
+    
+    # Handle promotions (other than queen)
+    if move.promotion and move.promotion != chess.QUEEN:
+        promo_pieces = [chess.KNIGHT, chess.BISHOP, chess.ROOK]
+        if move.promotion in promo_pieces:
+            move_type = 16 + promo_pieces.index(move.promotion)
+            return from_square * 19 + move_type
+            
+    # If we get here, something went wrong
+    return 0  # Safe default
+
+from mcts import MCTS
 import random
 from torch.utils.data import Dataset, DataLoader
 
