@@ -1,105 +1,100 @@
-import chess
-import numpy as np
 import torch
-from collections import deque
-from ..mcts.search import MCTS
+import chess
+from src.environment.chess_env import ChessEnv
+from src.mcts.search import MCTS
+from tqdm import tqdm
 
 class SelfPlay:
     """Generates training data through self-play games."""
     
-    def __init__(self, model, move_encoder, games_to_play=100, 
-                 mcts_simulations=800, max_moves=200):
+    def __init__(self, model, move_encoder, games_to_play=100, mcts_sims=800):
         """Initialize self-play generator.
         
         Args:
             model: Neural network model
             move_encoder: MoveEncoder instance
             games_to_play: Number of games to generate
-            mcts_simulations: Number of MCTS simulations per move
-            max_moves: Maximum number of moves per game
+            mcts_sims: Number of MCTS simulations per move
         """
         self.model = model
         self.move_encoder = move_encoder
         self.games_to_play = games_to_play
-        self.mcts = MCTS(model, move_encoder, mcts_simulations)
-        self.max_moves = max_moves
+        self.mcts_sims = mcts_sims
+        self.device = next(model.parameters()).device
         
     def generate_game(self):
         """Play a single game and generate training data.
         
         Returns:
-            list: List of (state, policy_target, value_target) tuples
+            list: List of dictionaries containing board_tensor, policy, and turn
         """
-        board = chess.Board()
-        states = []
-        policies = []
+        env = ChessEnv()
+        mcts = MCTS(self.model, self.move_encoder, num_simulations=self.mcts_sims)
+        training_data = []
         
-        # Keep track of positions and their MCTS visit counts
-        game_history = []
-        
-        # Play until game is over or max moves reached
-        move_count = 0
-        while not board.is_game_over() and move_count < self.max_moves:
-            # Get current state
-            state = self.move_encoder.encode_moves(list(board.legal_moves), board)
-            states.append(state)
+        while not env.is_game_over():
+            # Get board tensor and move it to the correct device
+            board_tensor = env.get_board_tensor()
+            board_tensor = board_tensor.to(self.device)
             
-            # Run MCTS with temperature
-            temperature = 1.0 if move_count < 30 else 0.0
-            root = self.mcts.search(board, temperature)
+            # Run MCTS
+            root = mcts.search(env.board, board_tensor)
             
-            # Store visit count distribution as policy target
-            visits = root.get_visit_counts()
-            total_visits = sum(count for _, count in visits)
-            policy = torch.zeros(73, 8, 8)
+            # Get policy from visit counts
+            policy = torch.zeros(1968, device=self.device)
+            total_visits = sum(child.visit_count for child in root.children.values())
             
-            for move, count in visits:
-                try:
-                    square_idx, move_type_idx = self.move_encoder.move_to_policy_index(move, board)
-                    row, col = self.square_to_coordinates(square_idx)
-                    policy[move_type_idx, row, col] = count / total_visits
-                except ValueError:
-                    continue
-                    
-            policies.append(policy)
+            for move, child in root.children.items():
+                move_idx = self.move_encoder.move_to_policy_index(move)
+                if move_idx is not None:
+                    policy[move_idx] = child.visit_count / total_visits
+            
+            # Store position
+            training_data.append({
+                'board_tensor': board_tensor,
+                'policy': policy,
+                'turn': env.board.turn
+            })
             
             # Select and make move
-            move = root.get_best_move(temperature)
-            if move is None:
-                break
-                
-            board.push(move)
-            move_count += 1
+            if len(env.board.move_stack) < 30:  # Temperature = 1
+                probs = torch.tensor([child.visit_count for child in root.children.values()], device=self.device)
+                probs = probs / probs.sum()
+                move_idx = torch.multinomial(probs, 1).item()
+                move = list(root.children.keys())[move_idx]
+            else:  # Temperature = 0
+                move = max(root.children.items(), key=lambda x: x[1].visit_count)[0]
             
-            # Store position and policy
-            game_history.append((state, policy))
+            env.make_move(move)
         
-        # Get game result
-        if board.is_checkmate():
-            value = -1.0 if board.turn else 1.0
+        # Add game result to all positions
+        outcome = env.board.outcome()
+        if outcome is None:
+            result = 0
+        elif outcome.winner is None:
+            result = 0
         else:
-            value = 0.0
+            result = 1 if outcome.winner else -1
             
-        # Create training data with correct value targets
-        training_data = []
-        for state, policy in game_history:
-            training_data.append((state, policy, value))
-            value = -value  # Flip value for opponent's position
-            
+        for data in training_data:
+            data['value'] = result if data['turn'] else -result
+        
         return training_data
     
     def generate_training_data(self):
         """Generate training data from multiple self-play games.
         
         Returns:
-            list: List of (state, policy_target, value_target) tuples
+            list: List of dictionaries containing board_tensor, policy, and value
         """
         all_training_data = []
-        
-        for game in range(self.games_to_play):
-            game_data = self.generate_game()
-            all_training_data.extend(game_data)
-            
+        for _ in tqdm(range(self.games_to_play), desc="Generating games"):
+            try:
+                game_data = self.generate_game()
+                all_training_data.extend(game_data)
+            except Exception as e:
+                print(f"\nError in game: {str(e)}")
+                continue
         return all_training_data
     
     def square_to_coordinates(self, square):

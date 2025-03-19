@@ -5,11 +5,14 @@ from src.training.self_play import SelfPlay
 from src.training.trainer import Trainer
 from tqdm import tqdm
 
-def train_model(num_games=10, num_epochs=5):  # Reduced numbers for testing
+def train_model(num_games=10, num_epochs=5):
     print("Initializing model and components...")
+    
+    # Set up device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
+    # Initialize model and move it to device
     model = ChessModel()
     model = model.to(device)
     move_encoder = MoveEncoder()
@@ -17,7 +20,7 @@ def train_model(num_games=10, num_epochs=5):  # Reduced numbers for testing
     print(f"\nGenerating {num_games} self-play games...")
     self_play = SelfPlay(model, move_encoder, games_to_play=num_games)
     
-    # Show progress for each game
+    # Generate training data
     all_training_data = []
     for game_num in tqdm(range(num_games), desc="Generating games"):
         try:
@@ -30,10 +33,14 @@ def train_model(num_games=10, num_epochs=5):  # Reduced numbers for testing
     
     print(f"\nCollected {len(all_training_data)} training positions")
     
+    if not all_training_data:
+        print("No training data collected. Exiting...")
+        return
+    
     print("\nTraining model...")
     trainer = Trainer(model)
     
-    # Training loop with progress bar
+    # Training loop
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         try:

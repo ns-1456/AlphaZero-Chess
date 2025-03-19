@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import numpy as np
+import random
 
 class ChessDataset(Dataset):
     """Dataset for training the chess model."""
@@ -13,27 +13,23 @@ class ChessDataset(Dataset):
         Args:
             training_data: List of (state, policy_target, value_target) tuples
         """
-        self.states = []
-        self.policy_targets = []
-        self.value_targets = []
+        self.training_data = training_data
         
-        for state, policy, value in training_data:
-            self.states.append(state)
-            self.policy_targets.append(policy)
-            self.value_targets.append(value)
-            
     def __len__(self):
-        return len(self.states)
+        return len(self.training_data)
         
     def __getitem__(self, idx):
-        return (self.states[idx], 
-                self.policy_targets[idx], 
-                torch.tensor([self.value_targets[idx]], dtype=torch.float32))
+        data = self.training_data[idx]
+        return {
+            'board': data['board_tensor'],
+            'policy': data['policy'],
+            'value': torch.tensor([data['value']], dtype=torch.float32).to(data['board_tensor'].device)
+        }
 
 class Trainer:
     """Trains the chess model using self-play data."""
     
-    def __init__(self, model, batch_size=128, learning_rate=0.001):
+    def __init__(self, model, batch_size=256, learning_rate=0.001):
         """Initialize trainer.
         
         Args:
@@ -42,6 +38,7 @@ class Trainer:
             learning_rate: Learning rate for optimization
         """
         self.model = model
+        self.device = next(model.parameters()).device
         self.batch_size = batch_size
         
         # Loss functions
@@ -60,41 +57,56 @@ class Trainer:
         Returns:
             tuple: (average policy loss, average value loss)
         """
+        if not training_data:
+            raise ValueError("No training data provided")
+            
+        # Create dataset and dataloader
         dataset = ChessDataset(training_data)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size, 
-                              shuffle=True)
+        dataloader = DataLoader(
+            dataset, 
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=True if self.device.type == 'cuda' else False
+        )
         
+        # Training metrics
         total_policy_loss = 0
         total_value_loss = 0
         num_batches = 0
         
+        # Set model to training mode
         self.model.train()
-        for states, policy_targets, value_targets in dataloader:
+        
+        # Training loop
+        for batch in dataloader:
+            # Get data
+            boards = batch['board']
+            target_policies = batch['policy']
+            target_values = batch['value']
+            
             # Forward pass
-            policy_output, value_output = self.model(states)
+            policy_logits, value_pred = self.model(boards)
             
             # Calculate losses
-            policy_loss = self.policy_loss(
-                policy_output.view(-1, 73*8*8),
-                policy_targets.view(-1, 73*8*8)
-            )
-            value_loss = self.value_loss(value_output, value_targets)
+            policy_loss = -torch.mean(torch.sum(target_policies * policy_logits, dim=1))
+            value_loss = torch.mean((value_pred - target_values) ** 2)
+            total_loss = policy_loss + value_loss
             
-            # Combined loss
-            loss = policy_loss + value_loss
-            
-            # Backward pass and optimize
+            # Backward pass
             self.optimizer.zero_grad()
-            loss.backward()
+            total_loss.backward()
             self.optimizer.step()
             
-            # Track losses
+            # Update metrics
             total_policy_loss += policy_loss.item()
             total_value_loss += value_loss.item()
             num_batches += 1
-            
-        return (total_policy_loss / num_batches,
-                total_value_loss / num_batches)
+        
+        # Calculate average losses
+        avg_policy_loss = total_policy_loss / num_batches
+        avg_value_loss = total_value_loss / num_batches
+        
+        return avg_policy_loss, avg_value_loss
     
     def save_model(self, path):
         """Save model to file."""
@@ -102,5 +114,5 @@ class Trainer:
     
     def load_model(self, path):
         """Load model from file."""
-        self.model.load_state_dict(torch.load(path))
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
         self.model.eval() 
